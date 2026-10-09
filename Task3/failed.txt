@@ -1,0 +1,34 @@
+kubectl describe pod -l app=scaletestapp | tail -25
+  PodReadyToStartContainers   True
+  Initialized                 True
+  Ready                       False
+  ContainersReady             False
+  PodScheduled                True
+Volumes:
+  kube-api-access-dm9sl:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    Optional:                false
+    DownwardAPI:             true
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason     Age               From               Message
+  ----     ------     ----              ----               -------
+  Normal   Scheduled  20s               default-scheduler  Successfully assigned default/scaletestapp-6b86d788cf-7v8tl to minikube
+  Normal   BackOff    18s               kubelet            spec.containers{scaletestapp}: Back-off pulling image "ghcr.io/yandex-practicum/scaletestapp:latest"
+  Warning  Failed     18s               kubelet            spec.containers{scaletestapp}: Error: ImagePullBackOff
+  Normal   Pulling    4s (x2 over 20s)  kubelet            spec.containers{scaletestapp}: Pulling image "ghcr.io/yandex-practicum/scaletestapp:latest"
+  Warning  Failed     3s (x2 over 19s)  kubelet            spec.containers{scaletestapp}: Failed to pull image "ghcr.io/yandex-practicum/scaletestapp:latest": rpc error: code = NotFound desc = failed to pull and unpack image "ghcr.io/yandex-practicum/scaletestapp:latest": no match for platform in manifest: not found
+  Warning  Failed     3s (x2 over 19s)  kubelet            spec.containers{scaletestapp}: Error: ErrImagePull
+
+
+
+
+
+
+# Не может поставиться, из-за того, что у меня мак
+Failed to pull image "ghcr.io/yandex-practicum/scaletestapp:latest": rpc error: code = NotFound desc = failed to pull and unpack image "ghcr.io/yandex-practicum/scaletestapp:latest": no match for platform in manifest: not found

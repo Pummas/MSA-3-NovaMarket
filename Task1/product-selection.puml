@@ -1,0 +1,43 @@
+@startuml Sequence_1_ProductSelection
+title Сценарий 1. Выбор товара
+autonumber
+
+actor "Покупатель" as buyer
+participant "Mobile App" as app
+participant "API Gateway" as gw
+participant "Catalog Service" as catalog
+database "Catalog DB" as catalogDb
+participant "Cart Service" as cart
+database "Cart DB (Redis)" as cartDb
+
+== Просмотр каталога ==
+buyer -> app : Открывает каталог
+app -> gw : GET /products?filters
+gw -> catalog : Запрос списка товаров
+catalog -> catalogDb : Выборка товаров (категория, цена, рейтинг)
+catalogDb --> catalog : Список товаров
+catalog --> gw : Товары (цена, название, фото, описание)
+gw --> app : 200 OK
+app --> buyer : Показывает список товаров
+
+== Карточка товара и отзывы ==
+buyer -> app : Открывает карточку товара
+app -> gw : GET /products/{id}
+gw -> catalog : Запрос карточки
+catalog -> catalogDb : Товар + отзывы
+catalogDb --> catalog : Данные
+catalog --> gw : Карточка + отзывы
+gw --> app : 200 OK
+app --> buyer : Показывает карточку и отзывы
+
+== Добавление в корзину ==
+buyer -> app : Добавить товар в корзину
+app -> gw : POST /cart/items
+gw -> cart : Добавить позицию
+cart -> cartDb : Сохранить корзину
+cartDb --> cart : OK
+cart --> gw : Корзина обновлена
+gw --> app : 200 OK
+app --> buyer : Товар в корзине (заказ ещё не оформлен)
+
+@enduml
