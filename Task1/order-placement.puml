@@ -1,0 +1,113 @@
+@startuml Sequence_2_OrderPlacement
+title Сценарий 2. Оформление заказа (Saga)
+autonumber
+
+actor "Покупатель" as buyer
+participant "Mobile App" as app
+participant "API Gateway" as gw
+participant "Order Service" as order
+database "Order DB" as orderDb
+participant "Payment Service" as payment
+participant "Платёжный шлюз" as payGw
+participant "Delivery Service" as delivery
+participant "Логистика" as logistics
+participant "Notification" as notif
+participant "Seller Service" as seller
+queue "Event Bus" as bus
+
+== Шаг 1. Подтверждение состава и резервирование товаров ==
+buyer -> app : Подтверждает состав, адрес, способ доставки и оплаты
+app -> gw : POST /orders
+gw -> order : Создать заказ
+order -> orderDb : Сохранить заказ (статус «Ожидает оплаты»)
+order -> bus : **OrderCreated**
+order -> orderDb : Проверить остатки и зарезервировать товары
+
+alt Товар в наличии
+    order -> orderDb : Резерв сохранён
+    order -> bus : **InventoryReserved**
+    order --> gw : orderId
+    gw --> app : 200 OK
+    app --> buyer : «Заказ оформляется»
+
+else Товара нет
+    order -> orderDb : Статус «Отменён»
+    order -> bus : **InventoryReservationFailed**
+    order -> bus : **OrderCancelled**
+    order --> gw : orderId
+    gw --> app : 200 OK
+    app --> buyer : «Заказ отменён»
+    bus -> notif : InventoryReservationFailed
+    notif --> buyer : Push «Заказ отменён — нет в наличии»
+end
+
+== Шаг 2. Оплата ==
+bus -> payment : InventoryReserved
+alt Карта привязана (CARD_BOUND)
+    payment -> payGw : Автосписание
+else Карта не привязана
+    payment --> app : Редирект на платёжную страницу
+    buyer -> payGw : Вводит данные карты
+end
+payGw --> payment : Результат
+
+alt Платёж успешен
+    payment -> bus : **PaymentSucceeded**
+    bus -> order : PaymentSucceeded
+    order -> orderDb : Статус «Оплачен и готовится к отправке»
+    bus -> seller : PaymentSucceeded
+    seller --> buyer : Уведомление продавцу «Подготовить товар»
+    bus -> notif : PaymentSucceeded
+    notif --> buyer : Push «Заказ оплачен»
+
+else Платёж отклонён
+    payment -> bus : **PaymentFailed**
+    bus -> order : PaymentFailed
+    order -> orderDb : Освободить резерв
+    order -> bus : **InventoryReleased** (compensation)
+    order -> orderDb : Статус «Отменён»
+    order -> bus : **OrderCancelled**
+    bus -> notif : OrderCancelled
+    notif --> buyer : Push «Платёж отклонён»
+
+else Таймаут платёжного шлюза
+    payment -> bus : **PaymentGatewayTimeout**
+    bus -> order : PaymentGatewayTimeout
+    order -> orderDb : Освободить резерв
+    order -> bus : **InventoryReleased** (compensation)
+    order -> orderDb : Статус «Отменён»
+    order -> bus : **OrderCancelled**
+    bus -> notif : OrderCancelled
+    notif --> buyer : Push «Платёжный шлюз не ответил»
+end
+
+== Шаг 3. Подготовка к доставке ==
+bus -> delivery : PaymentSucceeded
+delivery -> logistics : Создать заявку на доставку
+
+alt Логистика приняла
+    logistics --> delivery : Заявка принята, трек-номер
+    delivery -> bus : **DeliveryDispatched**
+    bus -> order : DeliveryDispatched
+    order -> orderDb : Статус «Передан в доставку», трек-номер
+    bus -> notif : DeliveryDispatched
+    notif --> buyer : Push с трек-номером
+    bus -> seller : DeliveryDispatched
+    seller --> buyer : Продавец видит «Отправлено»
+
+else Логистика отказала
+    logistics --> delivery : Отказ
+    delivery -> bus : **DeliveryRequestFailed**
+    bus -> order : DeliveryRequestFailed
+    order -> orderDb : Освободить резерв
+    order -> bus : **InventoryReleased** (compensation)
+    order -> orderDb : Статус «Отменён»
+    order -> bus : **OrderCancelled**
+    bus -> payment : OrderCancelled
+    payment -> payGw : Возврат средств
+    payment -> bus : **RefundSucceeded** (compensation)
+    bus -> notif : OrderCancelled
+    notif --> buyer : Push «Заказ отменён — логистика недоступна»
+end
+
+@enduml

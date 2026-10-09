@@ -1,0 +1,100 @@
+@startuml C2_NovaMarket_Task2
+!include <C4/C4_Container.puml>
+
+LAYOUT_WITH_LEGEND()
+title Контейнерная диаграмма (C2) - NovaMarket (история покупок)
+
+' ===== Акторы =====
+Person(buyer, "Покупатель", "Пользователь мобильного приложения")
+Person(seller, "Продавец", "Размещает товары, обрабатывает заказы")
+
+' ===== Внешние системы =====
+System_Ext(paymentGw, "Платёжный шлюз", "Внешний провайдер оплаты")
+System_Ext(logistics, "Логистический провайдер", "Внешняя служба доставки")
+
+' ===== Клиентские каналы =====
+System_Boundary(clients, "Клиентские каналы") {
+    Container(mobileApp, "Мобильное приложение", "iOS / Android", "Каталог, заказы, история покупок")
+    Container(sellerApp, "Кабинет продавца", "Web / Mobile", "Управление товарами и заказами")
+}
+
+' ===== Платформа =====
+System_Boundary(platform, "Платформа NovaMarket") {
+
+    Container(gateway, "API Gateway", "NGINX", "Маршрутизация, аутентификация, rate-limiting")
+
+    Container(catalog, "Catalog Service", "Микросервис", "Каталог, фильтры, карточки, отзывы")
+    Container(cart, "Cart Service", "Микросервис", "Корзина покупателя")
+    Container(order, "Order Service", "Микросервис", "Заказы, статусы, остатки, оркестрация Saga")
+    Container(payment, "Payment Service", "Микросервис", "Интеграция с платёжным шлюзом")
+    Container(delivery, "Delivery Service", "Микросервис", "Заявки в логистику, трек-номера")
+    Container(notification, "Notification Service", "Микросервис", "Push и in-app уведомления")
+    Container(seller_manager, "Seller Service", "Микросервис", "Управление продавцами")
+
+    Container(history, "History Service", "Микросервис (CQRS read-model)", "Денормализованная read-модель истории покупок. Только чтение и обновление из событий. Чек, повтор заказа")
+    Container(receipt, "Receipt Service", "Микросервис", "Генерация PDF-чеков по заказу")
+
+    ContainerDb(catalogDb, "Catalog DB", "PostgreSQL", "Товары, категории, отзывы")
+    ContainerDb(cartDb, "Cart DB", "Redis", "Корзина")
+    ContainerDb(orderDb, "Order DB", "PostgreSQL", "Заказы, статусы, остатки, резервы")
+    ContainerDb(paymentDb, "Payment DB", "PostgreSQL", "Платежи, возвраты")
+    ContainerDb(deliveryDb, "Delivery DB", "PostgreSQL", "Заявки, трекинг")
+    ContainerDb(notificationDb, "Notification DB", "PostgreSQL", "Уведомления")
+    ContainerDb(seller_managerDb, "Seller DB", "PostgreSQL", "Продавцы, товары")
+    ContainerDb(historyDb, "History DB", "PostgreSQL + read-index", "Денормализованные записи истории заказов, оптимизированные под чтение")
+    ContainerDb(receiptDb, "Receipt DB", "S3 / Object Storage", "PDF-чеки")
+
+    ContainerQueue(event_bus, "Event Bus", "Kafka", "Брокер событий")
+}
+
+' ===== Покупатель → клиенты =====
+Rel(buyer, mobileApp, "Просматривает каталог, оформляет заказ, смотрит историю", "HTTPS")
+Rel(seller, sellerApp, "Управляет товарами и заказами", "HTTPS")
+Rel(mobileApp, gateway, "REST / gRPC", "HTTPS")
+Rel(sellerApp, gateway, "REST", "HTTPS")
+
+' ===== Gateway → сервисы =====
+Rel(gateway, catalog, "Каталог, отзывы", "REST")
+Rel(gateway, cart, "Корзина", "REST")
+Rel(gateway, order, "Оформление и статусы заказов", "REST")
+Rel(gateway, payment, "Привязка карт, статусы оплат", "REST")
+Rel(gateway, history, "**История покупок (чтение)**", "REST")
+Rel(gateway, receipt, "**Скачать чек**", "REST")
+Rel(gateway, seller_manager, "Запросы продавца", "REST")
+
+' ===== Сервисы → БД =====
+Rel(catalog, catalogDb, "Чтение/запись", "SQL")
+Rel(cart, cartDb, "Чтение/запись", "RESP")
+Rel(order, orderDb, "Чтение/запись", "SQL")
+Rel(payment, paymentDb, "Чтение/запись", "SQL")
+Rel(delivery, deliveryDb, "Чтение/запись", "SQL")
+Rel(notification, notificationDb, "Чтение/запись", "SQL")
+Rel(seller_manager, seller_managerDb, "Чтение/запись", "SQL")
+Rel(history, historyDb, "**Чтение (запросы) и запись (проекции)**", "SQL")
+Rel(receipt, receiptDb, "Чтение/запись PDF", "S3 API")
+
+' ===== Публикация событий =====
+Rel(order, event_bus, "publish: OrderCreated, InventoryReserved, InventoryReservationFailed, InventoryReleased, OrderCancelled, OrderStatusChanged", "AMQP")
+Rel(payment, event_bus, "publish: PaymentSucceeded, PaymentFailed, PaymentGatewayTimeout, RefundSucceeded", "AMQP")
+Rel(delivery, event_bus, "publish: DeliveryDispatched, DeliveryRequestFailed, DeliveryCompleted", "AMQP")
+Rel(seller_manager, event_bus, "publish: SellerOnboarded, ProductPublished, ProductUpdated, PriceChanged", "AMQP")
+Rel(catalog, event_bus, "publish: ProductUpdated, PriceChanged", "AMQP")
+
+' ===== Подписки на события =====
+Rel(event_bus, payment, "subscribe: InventoryReserved, OrderCancelled", "AMQP")
+Rel(event_bus, order, "subscribe: PaymentSucceeded, PaymentFailed, PaymentGatewayTimeout, DeliveryDispatched, DeliveryRequestFailed, DeliveryCompleted", "AMQP")
+Rel(event_bus, delivery, "subscribe: PaymentSucceeded", "AMQP")
+Rel(event_bus, notification, "subscribe: OrderCreated, InventoryReservationFailed, PaymentSucceeded, PaymentFailed, PaymentGatewayTimeout, DeliveryDispatched, DeliveryCompleted, OrderCancelled", "AMQP")
+Rel(event_bus, seller_manager, "subscribe: OrderCreated, PaymentSucceeded, OrderStatusChanged, DeliveryDispatched", "AMQP")
+
+' ===== History Service - ключевой подписчик (CQRS) =====
+Rel(event_bus, history, "**subscribe: OrderCreated, OrderStatusChanged, OrderCancelled, PaymentSucceeded, PaymentFailed, RefundSucceeded, DeliveryDispatched, DeliveryCompleted**", "AMQP")
+
+' ===== Receipt читает read-model =====
+Rel(receipt, history, "**Читает данные заказа для чека**", "REST")
+
+' ===== Внешние интеграции =====
+Rel(payment, paymentGw, "Списание / возврат", "HTTPS")
+Rel(delivery, logistics, "Заявки, трекинг", "HTTPS")
+
+@enduml
